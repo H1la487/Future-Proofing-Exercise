@@ -8,7 +8,6 @@
   html, body { margin:0; padding:0; background:#080f1e; }
   * { box-sizing:border-box; }
 </style>
-<!-- React y ReactDOM INCRUSTADOS (no se descargan de internet) -->
 <script>/**
  * @license React
  * react.production.min.js
@@ -309,13 +308,11 @@ var d=null!=c&&c.hydratedSources||null,e=!1,f="",g=bj;null!==c&&void 0!==c&&(!0=
 function(a,b,c){if(!Vd(b))throw Error(n(200));return Wd(null,a,b,!1,c)};Q.unmountComponentAtNode=function(a){if(!Vd(a))throw Error(n(40));return a._reactRootContainer?(zb(function(){Wd(null,null,a,!1,function(){a._reactRootContainer=null;a[Ja]=null})}),!0):!1};Q.unstable_batchedUpdates=Tf;Q.unstable_renderSubtreeIntoContainer=function(a,b,c,d){if(!Vd(c))throw Error(n(200));if(null==a||void 0===a._reactInternals)throw Error(n(38));return Wd(a,b,c,!1,d)};Q.version="18.2.0-next-9e3b772b8-20220608"});
 })();
 </script>
-<!-- Unico recurso externo: Firebase (Google/gstatic), indispensable para sincronizar -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 </head>
 <body>
 <div id="root"></div>
-<!-- Tu configuracion de Firebase -->
 <script>
 const firebaseConfig = {
     apiKey:            "AIzaSyCAfU9yN9dN-rx_73bAlpQdeeHPUBnFGlU",
@@ -337,7 +334,6 @@ const firebaseConfig = {
   }
   const COLLECTION = "sids_solutions";
 </script>
-<!-- La app (pre-compilada, sin Babel) -->
 <script>
 const {
   useState,
@@ -420,6 +416,82 @@ async function clearAll() {
   const batch = db.batch();
   snap.forEach(d => batch.delete(d.ref));
   await batch.commit();
+}
+
+// ─── Export / extraction helpers ─────────────────────────────────────────────
+function quadrantLabelFor(axis1, axis2) {
+  const q = QUADRANTS.find(q => q.axis1 === axis1 && q.axis2 === axis2);
+  return q ? q.label : `${axis1} · ${axis2}`;
+}
+const SYNTHESIS_PROMPT = `You are facilitating the synthesis of a UNOPS SIDS Mission 2030 leadership-retreat foresight exercise. Participants placed candidate solutions on a 2x2 matrix: Axis 1 = Maturity (Proven vs Innovative), Axis 2 = Scale (At Scale vs Niche), producing four quadrants. Using ONLY the data below:
+1. Summarize the dominant themes in each quadrant.
+2. Highlight the 3-5 highest-leverage opportunities and any notable gaps or imbalances across categories.
+3. Recommend concrete next steps, focusing on "Amplify & Roll Out" (scale now) and "Incubate & Systemize" (invest to scale).
+Keep it concise, structured, and written for a senior leadership audience.
+
+=== EXERCISE DATA ===
+`;
+function buildLLMText(solutions) {
+  if (!solutions.length) return "No solutions submitted yet.";
+  const L = [];
+  L.push("SIDS Mission 2030 — Future Proofing Exercise");
+  L.push("Total solutions: " + solutions.length);
+  L.push("Axis 1 (Maturity): Proven = demonstrated & mature; Innovative = positioned, not yet deployed.");
+  L.push("Axis 2 (Scale): At Scale = broad applicability; Niche = specific, replicable.");
+  L.push("");
+  QUADRANTS.forEach(q => {
+    const items = solutions.filter(s => s.axis1 === q.axis1 && s.axis2 === q.axis2);
+    L.push(`== ${q.label}  (${q.axis1} · ${q.axis2}) — ${items.length} solution(s) ==`);
+    if (!items.length) L.push("  (none)");
+    items.forEach((s, i) => {
+      L.push(`  ${i + 1}. [${s.category}] ${s.name}${s.contributor ? " — by " + s.contributor : ""}`);
+      if (s.description) L.push(`     ${s.description}`);
+    });
+    L.push("");
+  });
+  const cats = CATEGORIES.map(c => `${c}: ${solutions.filter(s => s.category === c).length}`).join("  |  ");
+  L.push("Category totals — " + cats);
+  return L.join("\n");
+}
+function buildCSV(solutions) {
+  const esc = v => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
+  const header = ["name", "contributor", "category", "axis1_maturity", "axis2_scale", "quadrant", "description"];
+  const rows = solutions.map(s => [s.name, s.contributor, s.category, s.axis1, s.axis2, quadrantLabelFor(s.axis1, s.axis2), s.description].map(esc).join(","));
+  return "\uFEFF" + header.join(",") + "\n" + rows.join("\n");
+}
+function downloadFile(filename, content, mime) {
+  const blob = new Blob([content], {
+    type: mime
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (e) {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch (e2) {
+      return false;
+    }
+  }
 }
 
 // ─── Jitter positions within quadrant ────────────────────────────────────────
@@ -1171,6 +1243,167 @@ function SetupScreen() {
 }
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
+// ─── Print / PDF report (light theme, shown only when printing) ───────────────
+function PrintReport({
+  solutions
+}) {
+  const now = new Date();
+  const dotStyle = cat => {
+    const c = CAT_STYLE[cat] || CAT_STYLE[CATEGORIES[0]];
+    return {
+      display: "inline-block",
+      width: 9,
+      height: 9,
+      borderRadius: "50%",
+      background: c.dot,
+      border: `1.5px solid ${c.ring}`,
+      marginRight: 7,
+      verticalAlign: "middle",
+      flexShrink: 0
+    };
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    className: "print-only",
+    style: {
+      background: "#fff",
+      color: "#0b1c35",
+      fontFamily: "'Inter','Segoe UI',sans-serif",
+      padding: "4px 2px"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 10,
+      borderBottom: "2px solid #00c8e0",
+      paddingBottom: 10,
+      marginBottom: 14
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "#00c8e0",
+      color: "#080f1e",
+      fontWeight: 900,
+      fontSize: 13,
+      padding: "3px 9px",
+      letterSpacing: 2
+    }
+  }, "UNOPS"), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 9,
+      color: "#5a7a8a",
+      letterSpacing: 2,
+      textTransform: "uppercase"
+    }
+  }, "SIDS Mission 2030 · 2026 Leadership Retreat"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 18,
+      fontWeight: 800,
+      color: "#0b1c35"
+    }
+  }, "Future Proofing Exercise — Results")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginLeft: "auto",
+      fontSize: 10,
+      color: "#666",
+      textAlign: "right",
+      lineHeight: 1.5
+    }
+  }, now.toLocaleString(), /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("b", null, solutions.length), " solution", solutions.length !== 1 ? "s" : "")), /*#__PURE__*/React.createElement(Matrix, {
+    solutions: solutions,
+    onDelete: () => {},
+    facilitator: false
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 16,
+      flexWrap: "wrap",
+      margin: "12px 0 18px"
+    }
+  }, CATEGORIES.map(cat => /*#__PURE__*/React.createElement("div", {
+    key: cat,
+    style: {
+      display: "flex",
+      alignItems: "center",
+      fontSize: 11,
+      color: "#33414d"
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: dotStyle(cat)
+  }), /*#__PURE__*/React.createElement("span", null, cat, " ", /*#__PURE__*/React.createElement("b", null, "(", solutions.filter(s => s.category === cat).length, ")"))))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13,
+      fontWeight: 800,
+      color: "#0b1c35",
+      marginBottom: 8
+    }
+  }, "Submissions (", solutions.length, ")"), QUADRANTS.map(q => {
+    const items = solutions.filter(s => s.axis1 === q.axis1 && s.axis2 === q.axis2);
+    return /*#__PURE__*/React.createElement("div", {
+      key: q.label,
+      style: {
+        marginBottom: 12,
+        breakInside: "avoid"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12,
+        fontWeight: 800,
+        color: "#0b1c35",
+        borderLeft: "3px solid #00c8e0",
+        paddingLeft: 8,
+        marginBottom: 5
+      }
+    }, q.label, " ", /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: "#8a98a2",
+        fontWeight: 600
+      }
+    }, "· ", q.axis1, " · ", q.axis2, " — ", items.length)), items.length === 0 && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11,
+        color: "#b0b8be",
+        paddingLeft: 11
+      }
+    }, "—"), items.map(s => /*#__PURE__*/React.createElement("div", {
+      key: s.id,
+      style: {
+        fontSize: 11,
+        paddingLeft: 11,
+        marginBottom: 4,
+        breakInside: "avoid"
+      }
+    }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
+      style: dotStyle(s.category)
+    }), /*#__PURE__*/React.createElement("b", {
+      style: {
+        color: "#0b1c35"
+      }
+    }, s.name), /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: "#7a868f"
+      }
+    }, " · ", s.category), s.contributor && /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: "#7a868f"
+      }
+    }, " — ", s.contributor)), s.description && /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: "#55626b",
+        paddingLeft: 16,
+        marginTop: 1
+      }
+    }, s.description))));
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 14,
+      paddingTop: 8,
+      borderTop: "1px solid #e0e6ea",
+      fontSize: 9,
+      color: "#9aa6ad"
+    }
+  }, "Generated from the live shared board · UNOPS SIDS Mission 2030 Future Proofing Exercise"));
+}
 function App() {
   const [mode, setMode] = useState(null);
   const [solutions, setSolutions] = useState([]);
@@ -1240,11 +1473,33 @@ function App() {
   async function handleClearAll() {
     try {
       await clearAll();
-      showToast("Board cleared.");
+      showToast("Board cleared — ready for the next session.");
     } catch {
       showToast("⚠ Could not clear — try again.");
     }
     setConfirmClear(false);
+  }
+  async function handleCopyForLLM() {
+    if (!solutions.length) {
+      showToast("Nothing to copy yet.");
+      return;
+    }
+    const ok = await copyText(SYNTHESIS_PROMPT + buildLLMText(solutions));
+    showToast(ok ? "✓ Copied — paste into your LLM" : "⚠ Couldn't copy — try the JSON download");
+  }
+  function handleDownloadCSV() {
+    if (!solutions.length) {
+      showToast("Nothing to export yet.");
+      return;
+    }
+    downloadFile("sids-solutions.csv", buildCSV(solutions), "text/csv;charset=utf-8");
+  }
+  function handleDownloadJSON() {
+    if (!solutions.length) {
+      showToast("Nothing to export yet.");
+      return;
+    }
+    downloadFile("sids-solutions.json", JSON.stringify(solutions, null, 2), "application/json");
   }
   if (!CONFIGURED) return /*#__PURE__*/React.createElement(SetupScreen, null);
 
@@ -1371,7 +1626,8 @@ function App() {
     }
   }, "Results are shared across all participants in real time."));
   const isFac = mode === "facilitator";
-  return /*#__PURE__*/React.createElement("div", {
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "screen-only",
     style: {
       minHeight: "100vh",
       background: "#080f1e",
@@ -1459,6 +1715,19 @@ function App() {
       textTransform: "uppercase"
     }
   }, t === "matrix" ? "📊 Matrix" : "☰ Submissions")), /*#__PURE__*/React.createElement("button", {
+    onClick: () => window.print(),
+    title: "Save the matrix and the full submissions list as a PDF",
+    style: {
+      background: "transparent",
+      color: "#00c8e0",
+      border: "1.5px solid #0e4a5a",
+      borderRadius: 4,
+      padding: "5px 12px",
+      fontWeight: 700,
+      fontSize: 11,
+      cursor: "pointer"
+    }
+  }, "⬇ PDF"), /*#__PURE__*/React.createElement("button", {
     onClick: () => setConfirmClear(true),
     style: {
       background: "transparent",
@@ -1536,12 +1805,77 @@ function App() {
     }
   }, "Hover over dots to inspect · Updates instantly as entries arrive · New entries pulse on arrival")), !loading && isFac && tab === "submissions" && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontSize: 16,
-      fontWeight: 800,
-      color: "#fff",
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      flexWrap: "wrap",
+      gap: 10,
       marginBottom: 14
     }
-  }, "All Submissions (", solutions.length, ")"), solutions.length === 0 && /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 16,
+      fontWeight: 800,
+      color: "#fff"
+    }
+  }, "All Submissions (", solutions.length, ")"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 8,
+      flexWrap: "wrap"
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: handleCopyForLLM,
+    title: "Copy a structured summary + synthesis prompt, ready to paste into an LLM",
+    style: {
+      background: "#00c8e0",
+      color: "#0a1628",
+      border: "none",
+      borderRadius: 5,
+      padding: "7px 13px",
+      fontWeight: 800,
+      fontSize: 11,
+      cursor: "pointer",
+      letterSpacing: 0.3
+    }
+  }, "📋 Copy for LLM"), /*#__PURE__*/React.createElement("button", {
+    onClick: handleDownloadCSV,
+    style: {
+      background: "transparent",
+      color: "#7ecfe8",
+      border: "1.5px solid #1e4060",
+      borderRadius: 5,
+      padding: "7px 13px",
+      fontWeight: 700,
+      fontSize: 11,
+      cursor: "pointer"
+    }
+  }, "⬇ CSV"), /*#__PURE__*/React.createElement("button", {
+    onClick: handleDownloadJSON,
+    style: {
+      background: "transparent",
+      color: "#7ecfe8",
+      border: "1.5px solid #1e4060",
+      borderRadius: 5,
+      padding: "7px 13px",
+      fontWeight: 700,
+      fontSize: 11,
+      cursor: "pointer"
+    }
+  }, "⬇ JSON"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => window.print(),
+    title: "Save matrix + list as PDF",
+    style: {
+      background: "transparent",
+      color: "#00c8e0",
+      border: "1.5px solid #0e4a5a",
+      borderRadius: 5,
+      padding: "7px 13px",
+      fontWeight: 700,
+      fontSize: 11,
+      cursor: "pointer"
+    }
+  }, "⬇ PDF"))), solutions.length === 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       color: "#2a5070",
       fontSize: 13,
@@ -1655,10 +1989,20 @@ function App() {
     msg: toast
   }), /*#__PURE__*/React.createElement(ConfirmModal, {
     open: confirmClear,
-    text: "Clear all solutions from the shared board? This cannot be undone.",
+    text: "Before clearing: did you download the PDF / export the data? This empties the board for the next session and cannot be undone.",
     onYes: handleClearAll,
     onNo: () => setConfirmClear(false)
-  }), /*#__PURE__*/React.createElement("style", null, `@keyframes livePulse {0%,100%{opacity:1;}50%{opacity:0.4;}}`));
+  }), /*#__PURE__*/React.createElement("style", null, `@keyframes livePulse {0%,100%{opacity:1;}50%{opacity:0.4;}}`)), isFac && /*#__PURE__*/React.createElement(PrintReport, {
+    solutions: solutions
+  }), /*#__PURE__*/React.createElement("style", null, `
+      @media screen { .print-only { display: none; } }
+      @media print {
+        .screen-only { display: none !important; }
+        .print-only  { display: block !important; }
+        .print-only, .print-only * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        @page { margin: 12mm; }
+      }
+    `));
 }
 ReactDOM.createRoot(document.getElementById("root")).render(/*#__PURE__*/React.createElement(App, null));
 </script>
